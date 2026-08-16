@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "wzreadrust",
+  "version": "0.1.0",
+  "identifier": "com.whitz.wzread",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "WZREAD",
+        "width": 800,
+        "height": 600
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "identifier": "com.whitz.wzread",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "publisher": "Whitz",
+    "shortDescription": "WZREAD - Manga Reader",
+    "longDescription": "A modern manga reader application",
+    "copyright": "Copyright 2024 Whitz",
+    "category": "Reader",
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc3RjJDRDMyOThFNjE2RjMKUldUekZ1YVlNczN5ZCtuRFE1WnFtZHhtTzJqNXVFRlE0UXZBbEFXekpkL1pCcEtOK3JNWVNFUmwK",
+      "endpoints": [
+        "https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}
