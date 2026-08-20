@@ -18,6 +18,7 @@ use commands::extension::{
     get_manga_info,
     get_chapter_images,
     download_extension,
+    download_apk,
     get_extension_download_status,
 };
 use commands::comic::{
@@ -54,7 +55,6 @@ use tauri::{Builder, generate_context, Manager};
 use tracing_subscriber;
 use std::fs::File;
 use std::path::PathBuf;
-use extension::set_app_handle;
 
 pub fn run() {
     let log_dir = get_log_dir();
@@ -86,6 +86,7 @@ pub fn run() {
 
     Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_android_installer::init())
         .manage(pool)
         .invoke_handler(tauri::generate_handler![
             get_sources,
@@ -99,6 +100,7 @@ pub fn run() {
             get_manga_info,
             get_chapter_images,
             download_extension,
+            download_apk,
             get_extension_download_status,
             get_all_comics,
             save_comic,
@@ -122,11 +124,6 @@ pub fn run() {
             get_setting,
             set_setting,
         ])
-        .setup(|app| {
-            let app_handle = app.handle().clone();
-            set_app_handle(app_handle);
-            Ok(())
-        })
         .run(generate_context!())
         .expect("error while running tauri application");
 }

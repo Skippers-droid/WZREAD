@@ -42,6 +42,7 @@ export function ExtensionPage() {
     loadMore,
     hasMore,
     total,
+    page,
   } = useExtensionContent({ extensionId });
 
   const handleBack = () => {
@@ -71,6 +72,8 @@ export function ExtensionPage() {
       </Box>
     );
   }
+
+  const totalPages = Math.ceil(total / 20) || 1;
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: theme.palette.background.default }}>
@@ -202,7 +205,7 @@ export function ExtensionPage() {
           </ToggleButtonGroup>
 
           <Typography variant="body2" sx={{ color: theme.palette.text.disabled }}>
-            {isLoading ? 'Loading...' : `${items.length} of ${total} items`}
+            {isLoading ? 'Loading...' : `Page ${page} of ${totalPages} (${items.length} items)`}
           </Typography>
         </Box>
 
@@ -311,7 +314,7 @@ export function ExtensionPage() {
                     py: 1,
                   }}
                 >
-                  {isLoading ? <CircularProgress size={24} sx={{ color: theme.palette.primary.contrastText }} /> : 'Load More'}
+                  {isLoading ? <CircularProgress size={24} sx={{ color: theme.palette.primary.contrastText }} /> : `Load More (Page ${page + 1})`}
                 </Button>
               </Box>
             )}

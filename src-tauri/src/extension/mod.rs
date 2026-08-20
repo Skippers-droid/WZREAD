@@ -1,6 +1,6 @@
 mod loader;
 mod handler;
-mod worker;
+mod rpc_client;
 
 pub use handler::ExtensionHandler;
-pub use worker::{WorkerManager, DownloadWorker, set_app_handle, get_app_handle};
+pub use rpc_client::{RpcClient, ExtensionRpcManager};

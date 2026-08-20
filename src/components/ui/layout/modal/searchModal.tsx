@@ -1,6 +1,4 @@
-// FILE: /src/components/SearchModal.tsx
-
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Dialog,
@@ -28,6 +26,7 @@ import SearchIcon from '@mui/icons-material/Search'
 import CloseIcon from '@mui/icons-material/Close'
 import FilterListIcon from '@mui/icons-material/FilterList'
 import AllInclusiveIcon from '@mui/icons-material/AllInclusive'
+import HistoryIcon from '@mui/icons-material/History'
 import { api } from '~/components'
 
 interface SearchModalProps {
@@ -41,15 +40,10 @@ interface SearchResult {
   data: any[]
   success: boolean
   total?: number
-  extensionId?: string
-  info?: {
-    name: string
-    version: string
-    description: string
-    author: string
-  }
-  isActive?: boolean
+  name?: string
   error?: string
+  duration_ms?: number
+  extensionId?: string
 }
 
 export function SearchModal({ open, onClose }: SearchModalProps) {
@@ -61,6 +55,14 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
   const [error, setError] = useState<string | null>(null)
   const [hasSearched, setHasSearched] = useState(false)
   const [filterType, setFilterType] = useState<FilterType>('all')
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('searchHistory')
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  })
 
   const handleSearch = useCallback(async () => {
     if (!query.trim() || isLoading) return
@@ -71,7 +73,11 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
     setHasSearched(true)
 
     try {
-      const data = await api.extension.search('search', query) as Record<string, SearchResult>
+      const data = await api.extension.search('all', 'search', query) as Record<string, SearchResult>
+      
+      const newHistory = [query, ...searchHistory.filter(h => h !== query)].slice(0, 10)
+      setSearchHistory(newHistory)
+      localStorage.setItem('searchHistory', JSON.stringify(newHistory))
       
       if (filterType === 'name') {
         const filteredData: Record<string, SearchResult> = {}
@@ -81,29 +87,39 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
           if (result.success && Array.isArray(result.data)) {
             const filteredItems = result.data.filter((item: any) => {
               const title = (item.title || '').toLowerCase()
-              const name = (item.name || '').toLowerCase()
-              return title.includes(searchLower) || name.includes(searchLower)
+              return title.includes(searchLower)
             })
             
-            if (filteredItems.length > 0) {
-              filteredData[key] = {
-                ...result,
-                data: filteredItems,
-                total: filteredItems.length
-              }
+            filteredData[key] = {
+              ...result,
+              data: filteredItems,
+              total: filteredItems.length,
+              extensionId: result.extensionId || key
+            }
+          } else {
+            filteredData[key] = {
+              ...result,
+              extensionId: result.extensionId || key
             }
           }
         }
         setResults(filteredData)
       } else {
-        setResults(data)
+        const dataWithExtId: Record<string, SearchResult> = {}
+        for (const [key, result] of Object.entries(data)) {
+          dataWithExtId[key] = {
+            ...result,
+            extensionId: result.extensionId || key
+          }
+        }
+        setResults(dataWithExtId)
       }
     } catch (err) {
       setError((err as Error).message)
     } finally {
       setIsLoading(false)
     }
-  }, [query, isLoading, filterType])
+  }, [query, isLoading, filterType, searchHistory])
 
   const handleKeyPress = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -128,6 +144,16 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
       handleClose()
     }
   }, [navigate, handleClose])
+
+  const handleHistoryClick = useCallback((historyQuery: string) => {
+    setQuery(historyQuery)
+    setTimeout(() => handleSearch(), 100)
+  }, [handleSearch])
+
+  const handleClearHistory = useCallback(() => {
+    setSearchHistory([])
+    localStorage.removeItem('searchHistory')
+  }, [])
 
   const getResultsCount = useCallback(() => {
     let count = 0
@@ -160,16 +186,6 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
           height: '90vh', 
           maxHeight: '90vh', 
           bgcolor: theme.palette.background.paper,
-          '&::-webkit-scrollbar': {
-            width: '4px',
-          },
-          '&::-webkit-scrollbar-track': {
-            background: 'transparent',
-          },
-          '&::-webkit-scrollbar-thumb': {
-            background: 'rgba(255,255,255,0.1)',
-            borderRadius: '2px',
-          },
         },
       }}
     >
@@ -309,6 +325,45 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
           </Paper>
         )}
 
+        {!hasSearched && !isLoading && !query && !error && searchHistory.length > 0 && (
+          <Box sx={{ mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+              <Typography variant="subtitle2" sx={{ color: theme.palette.text.secondary, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <HistoryIcon sx={{ fontSize: '1rem' }} />
+                Recent Searches
+              </Typography>
+              <Button size="small" onClick={handleClearHistory} sx={{ color: theme.palette.text.disabled, fontSize: '0.7rem' }}>
+                Clear
+              </Button>
+            </Box>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {searchHistory.map((item, index) => (
+                <Chip
+                  key={index}
+                  label={item}
+                  onClick={() => handleHistoryClick(item)}
+                  sx={{
+                    color: theme.palette.text.primary,
+                    bgcolor: theme.palette.action.hover,
+                    '&:hover': {
+                      bgcolor: theme.palette.action.selected,
+                    },
+                  }}
+                  size="small"
+                />
+              ))}
+            </Box>
+          </Box>
+        )}
+
+        {!hasSearched && !isLoading && !query && !error && searchHistory.length === 0 && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200 }}>
+            <Typography variant="body1" sx={{ color: theme.palette.text.secondary }}>
+              Enter a search term to begin
+            </Typography>
+          </Box>
+        )}
+
         {Object.keys(results).length > 0 && (
           <Box sx={{ height: 'calc(100% - 140px)', overflow: 'hidden' }}>
             <Box sx={{ mb: 1 }}>
@@ -340,26 +395,30 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
                 overflowY: 'auto',
                 overflowX: 'hidden',
                 pr: 0.5,
-                '&::-webkit-scrollbar': {
-                  width: '4px',
-                },
-                '&::-webkit-scrollbar-track': {
-                  background: 'transparent',
-                },
-                '&::-webkit-scrollbar-thumb': {
-                  background: 'rgba(255,255,255,0.1)',
-                  borderRadius: '2px',
-                },
               }}
             >
               {resultItems.map(([extensionName, result]: [string, SearchResult]) => {
                 const extensionId = result.extensionId || extensionName
+                const hasError = !result.success
+                
                 return (
                   <Box key={extensionName} sx={{ mb: 2 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                       <Typography variant="caption" fontWeight="bold" sx={{ color: theme.palette.text.primary }}>
-                        {result.info?.name || extensionName}
+                        {result.name || extensionName}
                       </Typography>
+                      {hasError && (
+                        <Chip
+                          label="Error"
+                          size="small"
+                          sx={{
+                            bgcolor: `${theme.palette.error.main}33`,
+                            color: theme.palette.error.main,
+                            fontSize: '0.6rem',
+                            height: 18,
+                          }}
+                        />
+                      )}
                     </Box>
 
                     {result.success ? (
@@ -430,7 +489,7 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
                       </>
                     ) : (
                       <Typography variant="caption" color="error">
-                        Error: {result.error}
+                        Error: {result.error || 'Unknown error'}
                       </Typography>
                     )}
                     <Divider sx={{ mt: 1.5, borderColor: theme.palette.divider }} />
@@ -445,14 +504,6 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200 }}>
             <Typography variant="body1" sx={{ color: theme.palette.text.secondary }}>
               No results found for "{query}"
-            </Typography>
-          </Box>
-        )}
-
-        {!hasSearched && !isLoading && !query && !error && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200 }}>
-            <Typography variant="body1" sx={{ color: theme.palette.text.secondary }}>
-              Enter a search term to begin
             </Typography>
           </Box>
         )}

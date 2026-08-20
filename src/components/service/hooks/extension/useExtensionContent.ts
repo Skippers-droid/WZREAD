@@ -94,6 +94,8 @@ export function useExtensionContent({ extensionId }: UseExtensionContentProps) {
     search: '',
   })
   const [isApplying, setIsApplying] = useState(false)
+  const [page, setPage] = useState(1)
+  const [totalItems, setTotalItems] = useState(0)
 
   useEffect(() => {
     const loadExtensions = async () => {
@@ -130,45 +132,28 @@ export function useExtensionContent({ extensionId }: UseExtensionContentProps) {
     
     let queryType = 'search'
     let queryParam = ''
-    let page = pageNum || 1
+    const currentPage = pageNum || 1
     
     if (mode === 'popular') {
       queryType = 'popular'
       queryParam = 'day'
     } else if (mode === 'latest') {
       queryType = 'latest'
-      page = pageNum || 1
     } else {
       queryType = 'filtered'
       queryParam = buildFilterQuery(filters)
     }
     
-    const result = await api.extension.search(queryType, queryParam || undefined, mode === 'latest' ? page : undefined)
+    const result = await api.extension.search(extensionId, queryType, queryParam || undefined, currentPage)
     
-    if (result && typeof result === 'object') {
-      let extensionData = null
-      
-      if (extensionId && result[extensionId]) {
-        extensionData = result[extensionId]
-      } else {
-        const keys = Object.keys(result)
-        for (const key of keys) {
-          if (result[key] && result[key].data && Array.isArray(result[key].data)) {
-            extensionData = result[key]
-            break
-          }
-        }
-      }
-      
-      if (extensionData && extensionData.data && Array.isArray(extensionData.data)) {
-        const sanitizedData = extensionData.data.map(sanitizeItem)
-        return {
-          data: sanitizedData,
-          total: extensionData.total || sanitizedData.length,
-          page: extensionData.page || page,
-          per_page: extensionData.per_page || sanitizedData.length,
-          has_more: extensionData.has_more || false
-        }
+    if (result && result.data && Array.isArray(result.data)) {
+      const sanitizedData = result.data.map(sanitizeItem)
+      return {
+        data: sanitizedData,
+        total: result.total || sanitizedData.length,
+        page: result.page || currentPage,
+        per_page: result.per_page || sanitizedData.length,
+        has_more: result.has_more || false
       }
     }
     
@@ -176,9 +161,9 @@ export function useExtensionContent({ extensionId }: UseExtensionContentProps) {
   }, [extensionId])
 
   const { data: searchData, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ['extensionSearch', extensionId, viewMode, appliedFilters],
+    queryKey: ['extensionSearch', extensionId, viewMode, appliedFilters, page],
     queryFn: async () => {
-      return fetchExtensionData(viewMode, appliedFilters)
+      return fetchExtensionData(viewMode, appliedFilters, page)
     },
     enabled: !!extensionInfo && !!extensionId,
     staleTime: 30 * 1000,
@@ -186,14 +171,21 @@ export function useExtensionContent({ extensionId }: UseExtensionContentProps) {
   })
 
   useEffect(() => {
-    if (searchData && !isFetching) {
-      setItems(searchData.data || [])
+    if (searchData) {
+      if (page === 1) {
+        setItems(searchData.data || [])
+      } else {
+        setItems(prev => [...prev, ...(searchData.data || [])])
+      }
+      setTotalItems(searchData.total || 0)
     }
-  }, [searchData, isFetching])
+  }, [searchData, page])
 
   const handleViewChange = useCallback((newMode: 'popular' | 'latest' | 'filtered') => {
     if (newMode === viewMode) return
     setViewMode(newMode)
+    setPage(1)
+    setItems([])
     if (newMode === 'filtered') {
       setFilterDialogOpen(true)
     } else {
@@ -207,6 +199,8 @@ export function useExtensionContent({ extensionId }: UseExtensionContentProps) {
     setAppliedFilters({ ...filterParams })
     setViewMode('filtered')
     setFilterDialogOpen(false)
+    setPage(1)
+    setItems([])
     setTimeout(() => {
       setIsApplying(false)
     }, 200)
@@ -224,6 +218,8 @@ export function useExtensionContent({ extensionId }: UseExtensionContentProps) {
     setAppliedFilters(resetParams)
     setViewMode('popular')
     setFilterDialogOpen(false)
+    setPage(1)
+    setItems([])
     setTimeout(() => {
       setIsApplying(false)
     }, 200)
@@ -235,25 +231,10 @@ export function useExtensionContent({ extensionId }: UseExtensionContentProps) {
 
   const loadMore = useCallback(async () => {
     if (searchData?.has_more && !isLoading && !isFetching) {
-      const nextPage = (searchData.page || 1) + 1
-      const result = await fetchExtensionData(viewMode, appliedFilters, nextPage)
-      
-      if (result && result.data && result.data.length > 0) {
-        setItems(prev => [...prev, ...result.data])
-        // Update the cached data with the new total
-        queryClient.setQueryData(
-          ['extensionSearch', extensionId, viewMode, appliedFilters],
-          (old: any) => ({
-            ...old,
-            data: [...(old?.data || []), ...result.data],
-            total: result.total,
-            page: result.page,
-            has_more: result.has_more
-          })
-        )
-      }
+      const nextPage = page + 1
+      setPage(nextPage)
     }
-  }, [searchData, isLoading, isFetching, extensionId, viewMode, appliedFilters, queryClient, fetchExtensionData])
+  }, [searchData, isLoading, isFetching, page])
 
   return {
     items,
@@ -271,6 +252,7 @@ export function useExtensionContent({ extensionId }: UseExtensionContentProps) {
     setFilterDialogOpen,
     loadMore,
     hasMore: searchData?.has_more || false,
-    total: searchData?.total || 0,
+    total: totalItems,
+    page,
   }
 }

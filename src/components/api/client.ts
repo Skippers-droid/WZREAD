@@ -71,8 +71,8 @@ export const api = {
   },
 
   extension: {
-    search: (query_type: string, query?: string, page?: number) => 
-      invoke<any>('search_extensions', { query_type, query, page }),
+    search: (extension_id: string, query_type: string, query?: string, page?: number) => 
+      invoke<any>('search_extensions', { extension_id, query_type, query, page }),
     getMangaInfo: (extension_id: string, book_id: string) =>
       invoke<any>('get_manga_info', { extension_id, book_id }),
     getChapterImages: (
@@ -83,7 +83,9 @@ export const api = {
       per_page?: number
     ) => invoke<ChapterImagesResult>('get_chapter_images', { extension_id, book_id, chapter, page, per_page }),
     download: (extension_id: string) =>
-      invoke<{ success: boolean; worker_id: string; message: string }>('download_extension', { extension_id }),
+      invoke<{ success: boolean; message: string }>('download_extension', { extension_id }),
+    downloadApk: (url: string) =>
+      invoke<{ success: boolean; message: string }>('download_apk', { url }),
     getDownloadStatus: (extension_id: string) =>
       invoke<{
         success: boolean

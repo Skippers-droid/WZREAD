@@ -1,19 +1,16 @@
-use anyhow::Result;
-use serde_json::{Value, json};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{info, error};
-use std::process::Stdio;
-use tokio::process::Command;
-use std::path::PathBuf;
-
+use crate::extension::rpc_client::ExtensionRpcManager;
+use crate::extension::loader::*;
 use crate::db::DbPool;
 use crate::models::*;
 use crate::services::SourceService;
-use crate::services::SettingsService;
-use crate::extension::loader::*;
-use crate::extension::worker::{WorkerManager, DownloadWorker};
+use anyhow::Result;
+use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::sync::mpsc;
+use tracing::{info, error};
 
 #[derive(Clone)]
 pub struct ExtensionHandler {
@@ -24,7 +21,7 @@ pub struct ExtensionHandler {
     loaded: Arc<Mutex<bool>>,
     pool: DbPool,
     extensions_dir: PathBuf,
-    worker_manager: WorkerManager,
+    rpc_manager: ExtensionRpcManager,
 }
 
 impl ExtensionHandler {
@@ -45,71 +42,8 @@ impl ExtensionHandler {
             loaded: Arc::new(Mutex::new(false)),
             pool,
             extensions_dir,
-            worker_manager: WorkerManager::new(),
+            rpc_manager: ExtensionRpcManager::new(),
         }
-    }
-
-    pub fn with_worker_manager(mut self, worker_manager: WorkerManager) -> Self {
-        self.worker_manager = worker_manager;
-        self
-    }
-
-    pub async fn get_worker_status(&self, worker_id: &str) -> Option<DownloadWorker> {
-        self.worker_manager.get_worker(worker_id).await
-    }
-
-    pub async fn get_worker_by_extension(&self, extension_id: &str) -> Option<DownloadWorker> {
-        self.worker_manager.get_worker_by_extension(extension_id).await
-    }
-
-    pub async fn create_download_worker(&self, extension_id: &str) -> String {
-        self.worker_manager.create_worker(extension_id).await
-    }
-
-    pub async fn update_worker_status(&self, worker_id: &str, status: &str, progress: u8, message: &str) {
-        self.worker_manager.update_worker(worker_id, status, progress, message).await
-    }
-
-    pub async fn complete_worker(&self, worker_id: &str, error: Option<String>) {
-        self.worker_manager.complete_worker(worker_id, error).await
-    }
-
-    async fn execute_extension(&self, extension_id: &str, method: &str, args: Vec<String>) -> Result<String> {
-        let ext_paths = self.extension_paths.lock().await;
-        let exe_path = ext_paths.get(extension_id)
-            .ok_or_else(|| anyhow::anyhow!("Extension executable not found: {}", extension_id))?;
-
-        let is_windows = cfg!(target_os = "windows");
-        let exe_name = if is_windows { format!("{}.exe", extension_id) } else { extension_id.to_string() };
-        let full_exe_path = exe_path.join(&exe_name);
-
-        if !full_exe_path.exists() {
-            return Err(anyhow::anyhow!("Executable not found: {:?}", full_exe_path));
-        }
-
-        let conn = crate::db::DbConn::get(&self.pool)?;
-        let user_agent = SettingsService::get_setting::<String>(&conn, "user_agent")?
-            .unwrap_or_else(|| "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36".to_string());
-
-        let mut cmd = Command::new(&full_exe_path);
-        cmd.arg(method);
-        for arg in &args {
-            cmd.arg(arg);
-        }
-        
-        cmd.env("USER_AGENT", user_agent);
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
-
-        let output = cmd.output().await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Extension execution failed: {}", stderr));
-        }
-
-        let stdout = String::from_utf8(output.stdout)?;
-        Ok(stdout)
     }
 
     pub async fn load_extensions(&self) -> Result<()> {
@@ -120,13 +54,6 @@ impl ExtensionHandler {
 
         let conn = crate::db::DbConn::get(&self.pool)?;
         let active_extensions = SourceService::get_active_extensions(&conn)?;
-
-        let mut active_ids = Vec::new();
-        for ext in &active_extensions {
-            if let Some(ref id) = ext.extension_id {
-                active_ids.push(id.clone());
-            }
-        }
 
         let manifest = fetch_manifest(&self.source_path).await?;
 
@@ -154,8 +81,7 @@ impl ExtensionHandler {
                         std::fs::create_dir_all(&ext_dir)?;
                     }
 
-                    let is_windows = cfg!(target_os = "windows");
-                    let exe_name = if is_windows { format!("{}.exe", ext_id) } else { ext_id.to_string() };
+                    let exe_name = if cfg!(windows) { format!("{}.exe", ext_id) } else { ext_id.to_string() };
                     let exe_path = ext_dir.join(&exe_name);
 
                     if !exe_path.exists() {
@@ -190,40 +116,46 @@ impl ExtensionHandler {
                     }
 
                     paths_map.insert(ext_id.clone(), ext_dir.clone());
-                    info!("Extension ready: {} (id: {})", ext_info.name, ext_id);
                 }
             }
         }
 
-        let mut active_ids_store = self.active_extension_ids.lock().await;
-        *active_ids_store = active_ids;
+        let mut active_ids = self.active_extension_ids.lock().await;
+        *active_ids = extensions_map.keys().cloned().collect();
+        info!("Loaded {} extensions", active_ids.len());
 
         *loaded = true;
         Ok(())
     }
 
-    pub async fn download_extension(&self, extension_id: &str, worker_id: &str) -> Result<()> {
-        self.update_worker_status(worker_id, "downloading", 10, "Fetching manifest...").await;
+    async fn execute_extension_rpc(&self, extension_id: &str, method: &str, params: Value) -> Result<Value> {
+        self.load_extensions().await?;
         
+        let paths = self.extension_paths.lock().await;
+        let exe_path = paths.get(extension_id)
+            .ok_or_else(|| anyhow::anyhow!("Extension not found: {}", extension_id))?;
+        
+        let exe_name = if cfg!(windows) { format!("{}.exe", extension_id) } else { extension_id.to_string() };
+        let full_exe_path = exe_path.join(&exe_name);
+        
+        self.rpc_manager.start_extension(extension_id, full_exe_path.to_str().unwrap()).await?;
+        
+        self.rpc_manager.execute(extension_id, method, params).await
+    }
+
+    pub async fn download_extension_silent(&self, extension_id: &str) -> Result<()> {
         let manifest = fetch_manifest(&self.source_path).await?;
-        
-        self.update_worker_status(worker_id, "downloading", 20, "Finding extension...").await;
         
         let ext_info = find_extension_in_manifest(&manifest, extension_id)
             .ok_or_else(|| anyhow::anyhow!("Extension not found in manifest: {}", extension_id))?;
-
-        self.update_worker_status(worker_id, "downloading", 30, "Creating directories...").await;
 
         let ext_dir = self.extensions_dir.join(extension_id);
         if !ext_dir.exists() {
             std::fs::create_dir_all(&ext_dir)?;
         }
 
-        let is_windows = cfg!(target_os = "windows");
-        let exe_name = if is_windows { format!("{}.exe", extension_id) } else { extension_id.to_string() };
+        let exe_name = if cfg!(windows) { format!("{}.exe", extension_id) } else { extension_id.to_string() };
         let exe_path = ext_dir.join(&exe_name);
-
-        self.update_worker_status(worker_id, "downloading", 40, "Downloading executable...").await;
 
         if let Some(executable_path) = &ext_info.executable_path {
             let base_path = self.source_path
@@ -233,11 +165,7 @@ impl ExtensionHandler {
             
             let url = format!("{}/{}", base_path, executable_path.trim_start_matches("./"));
             
-            self.update_worker_status(worker_id, "downloading", 60, "Writing file...").await;
-            
             fetch_extension_executable(&url, &exe_path).await?;
-            
-            self.update_worker_status(worker_id, "downloading", 80, "Setting permissions...").await;
             
             #[cfg(unix)]
             {
@@ -246,8 +174,6 @@ impl ExtensionHandler {
                 perms.set_mode(0o755);
                 std::fs::set_permissions(&exe_path, perms)?;
             }
-
-            self.update_worker_status(worker_id, "downloading", 90, "Registering extension...").await;
 
             let conn = crate::db::DbConn::get(&self.pool)?;
             let source = SourceService::get_active_source(&conn)?
@@ -261,7 +187,7 @@ impl ExtensionHandler {
                 author: ext_info.author.clone(),
                 cover: ext_info.cover.clone(),
                 is_active: true,
-                is_loaded: false,
+                is_loaded: true,
                 download_status: "completed".to_string(),
             }];
 
@@ -287,15 +213,13 @@ impl ExtensionHandler {
                 active_ids.push(extension_id.to_string());
             }
 
-            self.update_worker_status(worker_id, "completed", 100, "Installation complete!").await;
-            self.complete_worker(worker_id, None).await;
+            let mut loaded = self.loaded.lock().await;
+            *loaded = false;
 
             info!("Extension installed successfully: {}", extension_id);
             Ok(())
         } else {
             let error = format!("No executable path specified for extension: {}", extension_id);
-            self.update_worker_status(worker_id, "failed", 0, &error).await;
-            self.complete_worker(worker_id, Some(error.clone())).await;
             Err(anyhow::anyhow!(error))
         }
     }
@@ -340,10 +264,9 @@ impl ExtensionHandler {
                 let is_active = loaded_ids.iter().any(|(loaded_id, active)| loaded_id == &id && *active);
                 
                 let download_status = if is_loaded {
-                    let exe_dir = self.extensions_dir.join(&id);
-                    let is_windows = cfg!(target_os = "windows");
-                    let exe_name = if is_windows { format!("{}.exe", id) } else { id.to_string() };
-                    let exe_path = exe_dir.join(&exe_name);
+                    let ext_dir = self.extensions_dir.join(&id);
+                    let exe_name = if cfg!(windows) { format!("{}.exe", id) } else { id.to_string() };
+                    let exe_path = ext_dir.join(&exe_name);
                     
                     if exe_path.exists() {
                         "installed"
@@ -380,111 +303,191 @@ impl ExtensionHandler {
         self.load_extensions().await?;
 
         let extensions = self.extensions.lock().await;
-        let mut results = serde_json::Map::new();
         let active_ids = self.active_extension_ids.lock().await;
+
+        let mut results = serde_json::Map::new();
+
+        if extensions.is_empty() {
+            return Ok(json!({
+                "error": "No extensions found. Please download and activate an extension first.",
+                "data": []
+            }));
+        }
+
+        let mut tasks = Vec::new();
 
         for (id, info) in extensions.iter() {
             let is_active = active_ids.contains(id);
             
             if is_active {
-                let args = match query_type {
+                let params = match query_type {
                     "search" => {
                         let q = query.unwrap_or("");
-                        vec![q.to_string()]
+                        json!([q.to_string()])
                     }
                     "popular" => {
-                        let range = query.unwrap_or("day");
-                        vec![range.to_string()]
+                        let p = page.unwrap_or(1).to_string();
+                        json!([p])
                     }
                     "latest" => {
                         let p = page.unwrap_or(1).to_string();
-                        vec![p]
+                        json!([p])
                     }
                     "filtered" => {
                         let filter = query.unwrap_or("");
                         let p = page.unwrap_or(1).to_string();
-                        vec![filter.to_string(), p]
-                    }
-                    "genre" => {
-                        let genre = query.unwrap_or("");
-                        let p = page.unwrap_or(1).to_string();
-                        vec![genre.to_string(), p]
+                        json!([filter.to_string(), p])
                     }
                     _ => {
                         let q = query.unwrap_or("");
-                        vec![q.to_string()]
+                        json!([q.to_string()])
                     }
                 };
 
+                let handler_clone = self.clone();
+                let id_clone = id.clone();
+                let info_clone = info.clone();
                 let method = match query_type {
                     "popular" => "getPopular",
                     "latest" => "getLatest",
                     "filtered" => "getFiltered",
-                    "genre" => "getByGenre",
                     _ => "search",
                 };
 
-                let result = match self.execute_extension(id, method, args).await {
-                    Ok(val) => {
-                        match serde_json::from_str::<Value>(&val) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                error!("Failed to parse {} result for {}: {}", method, id, e);
-                                json!({ "error": format!("Parse error: {}", e), "data": [] })
+                tasks.push(tokio::spawn(async move {
+                    let start_time = std::time::Instant::now();
+                    let result = handler_clone.execute_extension_rpc(&id_clone, method, params).await;
+                    let duration = start_time.elapsed().as_millis();
+
+                    match result {
+                        Ok(v) => {
+                            let mut result_obj = v;
+                            if !result_obj.get("data").is_some() {
+                                result_obj = json!({
+                                    "data": [],
+                                    "total": 0,
+                                    "page": 1,
+                                    "per_page": 0,
+                                    "has_more": false,
+                                    "error": "Missing data field"
+                                });
                             }
+                            (id_clone, info_clone.name, Some(result_obj), None, duration)
+                        }
+                        Err(e) => {
+                            error!("Failed to execute {} for {}: {}", method, id_clone, e);
+                            (id_clone, info_clone.name, None, Some(e.to_string()), duration)
                         }
                     }
-                    Err(e) => {
-                        error!("Failed to execute {} for {}: {}", method, id, e);
-                        json!({ "error": e.to_string(), "data": [] })
-                    }
-                };
-                
-                results.insert(id.clone(), json!({
-                    "success": true,
-                    "data": result.get("data").cloned().unwrap_or(json!([])),
-                    "total": result.get("total").cloned().unwrap_or(json!(0)),
-                    "page": result.get("page").cloned().unwrap_or(json!(1)),
-                    "per_page": result.get("per_page").cloned().unwrap_or(json!(0)),
-                    "has_more": result.get("has_more").cloned().unwrap_or(json!(false)),
-                    "info": info,
-                    "extensionId": id,
-                    "isActive": is_active,
                 }));
+            }
+        }
+
+        for task in tasks {
+            if let Ok((id, name, data, error, duration)) = task.await {
+                if let Some(data) = data {
+                    results.insert(id.clone(), json!({
+                        "success": true,
+                        "name": name,
+                        "data": data.get("data").cloned().unwrap_or(json!([])),
+                        "total": data.get("total").cloned().unwrap_or(json!(0)),
+                        "page": data.get("page").cloned().unwrap_or(json!(1)),
+                        "per_page": data.get("per_page").cloned().unwrap_or(json!(0)),
+                        "has_more": data.get("has_more").cloned().unwrap_or(json!(false)),
+                        "duration_ms": duration,
+                    }));
+                } else {
+                    results.insert(id, json!({
+                        "success": false,
+                        "name": name,
+                        "error": error,
+                        "data": [],
+                        "total": 0,
+                        "page": 1,
+                        "per_page": 0,
+                        "has_more": false,
+                        "duration_ms": duration,
+                    }));
+                }
             }
         }
 
         Ok(Value::Object(results))
     }
 
-    pub async fn manga_info(&self, extension_id: &str, book_id: &str) -> Result<Value> {
+    pub async fn search_single(&self, extension_id: &str, query_type: &str, query: Option<&str>, page: Option<usize>) -> Result<Value> {
         self.load_extensions().await?;
 
         let extensions = self.extensions.lock().await;
-        if !extensions.contains_key(extension_id) {
-            return Err(anyhow::anyhow!("Extension not found: {}", extension_id));
-        }
-
         let active_ids = self.active_extension_ids.lock().await;
-        if !active_ids.contains(&extension_id.to_string()) {
-            return Err(anyhow::anyhow!("Extension not active: {}", extension_id));
+
+        if !extensions.contains_key(extension_id) {
+            return Ok(json!({
+                "error": format!("Extension not found: {}", extension_id),
+                "data": []
+            }));
         }
 
-        match self.execute_extension(extension_id, "manga_info", vec![book_id.to_string()]).await {
-            Ok(val) => {
-                match serde_json::from_str::<Value>(&val) {
-                    Ok(v) => Ok(v),
-                    Err(e) => {
-                        error!("Failed to parse manga_info result: {}", e);
-                        Ok(json!({ "error": format!("Parse error: {}", e) }))
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Failed to execute manga_info for {}: {}", extension_id, e);
-                Ok(json!({ "error": e.to_string() }))
-            }
+        let is_active = active_ids.contains(&extension_id.to_string());
+        if !is_active {
+            return Ok(json!({
+                "error": format!("Extension not active: {}", extension_id),
+                "data": []
+            }));
         }
+
+        let params = match query_type {
+            "search" => {
+                let q = query.unwrap_or("");
+                json!([q.to_string()])
+            }
+            "popular" => {
+                let p = page.unwrap_or(1).to_string();
+                json!([p])
+            }
+            "latest" => {
+                let p = page.unwrap_or(1).to_string();
+                json!([p])
+            }
+            "filtered" => {
+                let filter = query.unwrap_or("");
+                let p = page.unwrap_or(1).to_string();
+                json!([filter.to_string(), p])
+            }
+            _ => {
+                let q = query.unwrap_or("");
+                json!([q.to_string()])
+            }
+        };
+
+        let method = match query_type {
+            "popular" => "getPopular",
+            "latest" => "getLatest",
+            "filtered" => "getFiltered",
+            _ => "search",
+        };
+
+        let result = self.execute_extension_rpc(extension_id, method, params).await?;
+        
+        let mut result_obj = result;
+        if !result_obj.get("data").is_some() {
+            result_obj = json!({
+                "data": [],
+                "total": 0,
+                "page": 1,
+                "per_page": 0,
+                "has_more": false,
+                "error": "Missing data field"
+            });
+        }
+
+        Ok(result_obj)
+    }
+
+    pub async fn manga_info(&self, extension_id: &str, book_id: &str) -> Result<Value> {
+        self.load_extensions().await?;
+        let params = json!([book_id.to_string()]);
+        self.execute_extension_rpc(extension_id, "manga_info", params).await
     }
 
     pub async fn get_chapter_images(
@@ -496,56 +499,26 @@ impl ExtensionHandler {
         per_page: i64,
     ) -> Result<ChapterImagesResult> {
         self.load_extensions().await?;
-
-        let extensions = self.extensions.lock().await;
-        if !extensions.contains_key(extension_id) {
-            return Err(anyhow::anyhow!("Extension not found: {}", extension_id));
-        }
-
-        let active_ids = self.active_extension_ids.lock().await;
-        if !active_ids.contains(&extension_id.to_string()) {
-            return Err(anyhow::anyhow!("Extension not active: {}", extension_id));
-        }
-
-        let args = vec![
-            book_id.to_string(),
-            chapter.to_string(),
-            page.to_string(),
-            per_page.to_string(),
-        ];
-
-        match self.execute_extension(extension_id, "get_chapter_images", args).await {
-            Ok(result) => {
-                let json: Value = serde_json::from_str(&result).unwrap_or(json!({}));
-                
-                if let Some(error) = json.get("error").and_then(|v| v.as_str()) {
-                    error!("Extension error: {}", error);
-                    return Err(anyhow::anyhow!("Extension error: {}", error));
-                }
-                
-                let images: Vec<String> = json.get("images")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .map(|s| s.replace("\\/", "/"))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                
-                Ok(ChapterImagesResult {
-                    images,
-                    total: json.get("total").and_then(|v| v.as_i64()).unwrap_or(0),
-                    page: json.get("page").and_then(|v| v.as_i64()).unwrap_or(page),
-                    per_page: json.get("per_page").and_then(|v| v.as_i64()).unwrap_or(per_page),
-                    has_more: json.get("has_more").and_then(|v| v.as_bool()).unwrap_or(false),
-                })
-            }
-            Err(e) => {
-                error!("Failed to execute get_chapter_images: {}", e);
-                Err(e)
-            }
-        }
+        let params = json!([book_id.to_string(), chapter.to_string(), page.to_string(), per_page.to_string()]);
+        let result = self.execute_extension_rpc(extension_id, "get_chapter_images", params).await?;
+        
+        let images: Vec<String> = result.get("images")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .map(|s| s.replace("\\/", "/"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        
+        Ok(ChapterImagesResult {
+            images,
+            total: result.get("total").and_then(|v| v.as_i64()).unwrap_or(0),
+            page: result.get("page").and_then(|v| v.as_i64()).unwrap_or(page),
+            per_page: result.get("per_page").and_then(|v| v.as_i64()).unwrap_or(per_page),
+            has_more: result.get("has_more").and_then(|v| v.as_bool()).unwrap_or(false),
+        })
     }
 
     pub async fn get_chapter_images_all(
