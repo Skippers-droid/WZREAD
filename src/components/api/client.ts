@@ -71,7 +71,8 @@ export const api = {
   },
 
   extension: {
-    search: (query: string) => invoke<any>('search_extensions', { query }),
+    search: (query_type: string, query?: string, page?: number) => 
+      invoke<any>('search_extensions', { query_type, query, page }),
     getMangaInfo: (extension_id: string, book_id: string) =>
       invoke<any>('get_manga_info', { extension_id, book_id }),
     getChapterImages: (
@@ -81,6 +82,18 @@ export const api = {
       page?: number,
       per_page?: number
     ) => invoke<ChapterImagesResult>('get_chapter_images', { extension_id, book_id, chapter, page, per_page }),
+    download: (extension_id: string) =>
+      invoke<{ success: boolean; worker_id: string; message: string }>('download_extension', { extension_id }),
+    getDownloadStatus: (extension_id: string) =>
+      invoke<{
+        success: boolean
+        extension_id: string
+        status: string
+        progress: number
+        message: string
+        completed: boolean
+        error?: string | null
+      }>('get_extension_download_status', { extension_id }),
   },
 
   comics: {
@@ -100,7 +113,7 @@ export const api = {
     download: (data: DownloadChapterInput) =>
       invoke<DownloadChapterResponse>('download_chapter', { input: data }),
     getDownloadStatus: (data: DownloadChapterInput) =>
-      invoke<{ downloaded: boolean; chapter_number: number; title: string }>('get_download_status', { input: data }),
+      invoke<{ downloaded: boolean; chapter_number: number; title: string }>('get_chapter_download_status', { input: data }),
   },
 
   history: {

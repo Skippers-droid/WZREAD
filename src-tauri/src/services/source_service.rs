@@ -201,8 +201,19 @@ impl SourceService {
         {
             let mut stmt = tx.prepare(
                 r#"
-                INSERT INTO loaded_extension (source_id, extension_name, extension_description, extension_id, is_active)
+                INSERT INTO loaded_extension (
+                    source_id,
+                    extension_name,
+                    extension_description,
+                    extension_id,
+                    is_active
+                )
                 VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, extension_name)
+                DO UPDATE SET
+                    extension_description = excluded.extension_description,
+                    extension_id = excluded.extension_id,
+                    is_active = excluded.is_active
                 "#
             )?;
 
@@ -219,5 +230,63 @@ impl SourceService {
 
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn ensure_default_source(conn: &DbConn, default_link: &str) -> Result<crate::models::Source> {
+        let existing = conn.conn().query_row(
+            "SELECT id, source_name, source_link, source_cover, is_active, created_at, updated_at
+             FROM source
+             WHERE source_link = ?
+             LIMIT 1",
+            [default_link],
+            |row| {
+                Ok(crate::models::Source {
+                    id: row.get(0)?,
+                    source_name: row.get(1)?,
+                    source_link: row.get(2)?,
+                    source_cover: row.get(3)?,
+                    is_active: row.get::<_, i64>(4)? == 1,
+                    created_at: row.get::<_, String>(5)?.parse().unwrap_or_default(),
+                    updated_at: row.get::<_, String>(6)?.parse().unwrap_or_default(),
+                })
+            },
+        );
+
+        match existing {
+            Ok(source) => Ok(source),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                conn.conn().execute(
+                    "INSERT INTO source
+                     (source_name, source_link, is_active)
+                     VALUES (?, ?, 1)",
+                    [
+                        "WZREAD Extensions",
+                        default_link,
+                    ],
+                )?;
+
+                let source = conn.conn().query_row(
+                    "SELECT id, source_name, source_link, source_cover, is_active, created_at, updated_at
+                     FROM source
+                     WHERE source_link = ?
+                     LIMIT 1",
+                    [default_link],
+                    |row| {
+                        Ok(crate::models::Source {
+                            id: row.get(0)?,
+                            source_name: row.get(1)?,
+                            source_link: row.get(2)?,
+                            source_cover: row.get(3)?,
+                            is_active: row.get::<_, i64>(4)? == 1,
+                            created_at: row.get::<_, String>(5)?.parse().unwrap_or_default(),
+                            updated_at: row.get::<_, String>(6)?.parse().unwrap_or_default(),
+                        })
+                    },
+                )?;
+
+                Ok(source)
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 }

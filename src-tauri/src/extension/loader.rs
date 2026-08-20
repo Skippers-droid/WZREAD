@@ -1,6 +1,6 @@
 use anyhow::Result;
 use reqwest;
-use tracing::debug;
+use tracing::{debug, error};
 use std::path::PathBuf;
 use tokio::fs;
 use std::collections::HashMap;
@@ -15,13 +15,35 @@ static DOWNLOAD_LOCKS: Lazy<Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>> = Lazy:
 
 pub async fn fetch_manifest(source_path: &str) -> Result<Manifest> {
     debug!("Fetching manifest from: {}", source_path);
-    let response = reqwest::get(source_path).await?;
+    
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to build client: {}", e))?;
+    
+    let response = client.get(source_path)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to fetch manifest: {}", e))?;
     
     if !response.status().is_success() {
-        return Err(anyhow::anyhow!("Failed to fetch manifest: {}", response.status()));
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        error!("Manifest fetch failed: {} - {}", status, text);
+        return Err(anyhow::anyhow!("Failed to fetch manifest: {} - {}", status, text));
     }
     
-    let manifest: Manifest = response.json().await?;
+    let text = response.text().await?;
+    
+    if !text.trim_start().starts_with('{') {
+        error!("Manifest response is not JSON: {}", &text[..text.len().min(200)]);
+        return Err(anyhow::anyhow!("Manifest is not valid JSON (got HTML or plain text)"));
+    }
+    
+    let manifest: Manifest = serde_json::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("Failed to parse manifest JSON: {}", e))?;
+    
     Ok(manifest)
 }
 
@@ -44,13 +66,29 @@ pub async fn fetch_extension_executable(url: &str, dest_path: &PathBuf) -> Resul
 
     debug!("Fetching executable from URL: {} to {:?}", url, dest_path);
     
-    let response = reqwest::get(url).await?;
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to build client: {}", e))?;
+    
+    let response = client.get(url)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to fetch executable: {}", e))?;
+    
     if !response.status().is_success() {
         return Err(anyhow::anyhow!("Failed to fetch executable: {}", response.status()));
     }
     
     let bytes = response.bytes().await?;
     let bytes_len = bytes.len();
+    
+    if bytes_len < 100 {
+        let text = String::from_utf8_lossy(&bytes);
+        if text.contains("<!DOCTYPE") || text.contains("<html") {
+            return Err(anyhow::anyhow!("Got HTML instead of executable binary"));
+        }
+    }
     
     if let Some(parent) = dest_path.parent() {
         if !parent.exists() {
@@ -68,7 +106,6 @@ pub fn find_extension_in_manifest<'a>(
     extension_id: &str,
 ) -> Option<&'a ManifestExtension> {
     manifest.extensions.iter().find(|e| {
-        let manifest_id = e.name.to_lowercase().replace(' ', "");
-        manifest_id == extension_id.to_lowercase()
+        e.id == extension_id
     })
 }

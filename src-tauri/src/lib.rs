@@ -4,12 +4,34 @@ mod extension;
 mod commands;
 mod services;
 
+use commands::source::{
+    get_sources,
+    get_active_source,
+    save_source,
+    set_active_source,
+    delete_source,
+    get_source_extensions,
+    set_active_extension,
+};
+use commands::extension::{
+    search_extensions,
+    get_manga_info,
+    get_chapter_images,
+    download_extension,
+    get_extension_download_status,
+};
+use commands::comic::{
+    get_all_comics,
+    save_comic,
+    get_comic,
+    toggle_favorite,
+    delete_comic,
+};
 use commands::chapter::{
     get_cached_chapter_images,
     download_chapter,
-    get_download_status,
+    get_chapter_download_status,
 };
-
 use commands::history::{
     save_reading_history_ext,
     get_reading_history_ext,
@@ -19,16 +41,20 @@ use commands::history::{
     clear_reading_history_ext,
     get_all_reading_history_ext,
 };
-
-use commands::comic::{
-    toggle_favorite,
-    delete_comic,
+use commands::settings::{
+    get_settings,
+    save_settings,
+    get_user_agents,
+    save_user_agents,
+    get_setting,
+    set_setting,
 };
 
-use tauri::{Builder, generate_context};
+use tauri::{Builder, generate_context, Manager};
 use tracing_subscriber;
 use std::fs::File;
 use std::path::PathBuf;
+use extension::set_app_handle;
 
 pub fn run() {
     let log_dir = get_log_dir();
@@ -38,7 +64,7 @@ pub fn run() {
     let file = File::create(&log_file).expect("Failed to create log file");
     
     let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_max_level(tracing::Level::INFO)
         .with_target(false)
         .with_thread_ids(true)
         .with_thread_names(true)
@@ -62,24 +88,26 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(pool)
         .invoke_handler(tauri::generate_handler![
-            commands::source::get_sources,
-            commands::source::get_active_source,
-            commands::source::save_source,
-            commands::source::set_active_source,
-            commands::source::delete_source,
-            commands::source::get_source_extensions,
-            commands::source::set_active_extension,
-            commands::extension::search_extensions,
-            commands::extension::get_manga_info,
-            commands::extension::get_chapter_images,
-            commands::comic::get_all_comics,
-            commands::comic::save_comic,
-            commands::comic::get_comic,
+            get_sources,
+            get_active_source,
+            save_source,
+            set_active_source,
+            delete_source,
+            get_source_extensions,
+            set_active_extension,
+            search_extensions,
+            get_manga_info,
+            get_chapter_images,
+            download_extension,
+            get_extension_download_status,
+            get_all_comics,
+            save_comic,
+            get_comic,
             toggle_favorite,
             delete_comic,
             get_cached_chapter_images,
             download_chapter,
-            get_download_status,
+            get_chapter_download_status,
             save_reading_history_ext,
             get_reading_history_ext,
             get_last_read_ext,
@@ -87,13 +115,18 @@ pub fn run() {
             delete_chapter_history_ext,
             clear_reading_history_ext,
             get_all_reading_history_ext,
-            commands::settings::get_settings,
-            commands::settings::save_settings,
-            commands::settings::get_user_agents,
-            commands::settings::save_user_agents,
-            commands::settings::get_setting,
-            commands::settings::set_setting,
+            get_settings,
+            save_settings,
+            get_user_agents,
+            save_user_agents,
+            get_setting,
+            set_setting,
         ])
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            set_app_handle(app_handle);
+            Ok(())
+        })
         .run(generate_context!())
         .expect("error while running tauri application");
 }

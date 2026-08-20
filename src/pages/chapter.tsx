@@ -1,3 +1,4 @@
+// src/pages/chapter.tsx
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -40,6 +41,7 @@ export function Chapter() {
   const initialLoadDoneRef = useRef(false);
   const restoreAttemptsRef = useRef(0);
   const maxRestoreAttempts = 50;
+  const errorLoggedRef = useRef(false);
 
   const { data: comicData, isLoading: comicLoading } = useQuery({
     queryKey: ['comic', extensionId, bookId],
@@ -96,7 +98,24 @@ export function Chapter() {
     initialLoadDoneRef.current = false;
     lastSavedPageRef.current = -1;
     restoreAttemptsRef.current = 0;
+    errorLoggedRef.current = false;
   }, [chapterNumber, bookId, extensionId]);
+
+  useEffect(() => {
+    if (imagesError && !errorLoggedRef.current) {
+      console.error('Chapter not found or failed to load:', {
+        extensionId,
+        bookId,
+        chapterNumber,
+        error: imagesError.message || imagesError,
+      });
+      errorLoggedRef.current = true;
+      
+      setTimeout(() => {
+        navigate('/browse');
+      }, 1500);
+    }
+  }, [imagesError, extensionId, bookId, chapterNumber, navigate]);
 
   const restoreScrollPosition = useCallback(() => {
     if (images.length === 0) return false;
@@ -302,20 +321,38 @@ export function Chapter() {
 
   if (imagesError) {
     return (
-      <Box sx={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center', bgcolor: theme.palette.background.default }}>
+      <Box sx={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center', bgcolor: theme.palette.background.default, flexDirection: 'column', gap: 2 }}>
         <Typography variant="h5" color={theme.palette.text.secondary}>
-          {imagesError.message || 'Chapter not found'}
+          Chapter not found
         </Typography>
+        <Typography variant="body2" color={theme.palette.text.disabled}>
+          Redirecting to browse...
+        </Typography>
+        <CircularProgress size={24} sx={{ color: theme.palette.primary.main }} />
       </Box>
     );
   }
 
   if (images.length === 0) {
+    console.error('No images found for chapter:', {
+      extensionId,
+      bookId,
+      chapterNumber,
+    });
+    
+    setTimeout(() => {
+      navigate('/browse');
+    }, 1500);
+
     return (
-      <Box sx={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center', bgcolor: theme.palette.background.default }}>
+      <Box sx={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center', bgcolor: theme.palette.background.default, flexDirection: 'column', gap: 2 }}>
         <Typography variant="h5" color={theme.palette.text.secondary}>
           No images found for this chapter
         </Typography>
+        <Typography variant="body2" color={theme.palette.text.disabled}>
+          Redirecting to browse...
+        </Typography>
+        <CircularProgress size={24} sx={{ color: theme.palette.primary.main }} />
       </Box>
     );
   }

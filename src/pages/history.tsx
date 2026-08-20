@@ -1,3 +1,4 @@
+// src/pages/history.tsx
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -6,16 +7,18 @@ import {
   Container,
   Typography,
   CircularProgress,
-  Grid,
-  Card,
-  CardActionArea,
-  CardMedia,
-  CardContent,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemAvatar,
+  Avatar,
+  ListItemText,
   Chip,
   Paper,
   useTheme,
   Button,
   Alert,
+  Divider,
 } from '@mui/material';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import HistoryIcon from '@mui/icons-material/History';
@@ -134,6 +137,43 @@ export function History() {
     }
   };
 
+  const decodeHtmlEntities = (text: string): string => {
+    if (!text) return text;
+    
+    const entities: { [key: string]: string } = {
+      '&#8217;': "'",
+      '&#8216;': "'",
+      '&#8220;': '"',
+      '&#8221;': '"',
+      '&#8230;': '...',
+      '&amp;': '&',
+      '&lt;': '<',
+      '&gt;': '>',
+      '&quot;': '"',
+      '&apos;': "'",
+      '&#39;': "'",
+      '&#34;': '"',
+      '&#38;': '&',
+      '&#60;': '<',
+      '&#62;': '>',
+      '&#160;': ' ',
+    };
+    
+    let decoded = text;
+    for (const [entity, char] of Object.entries(entities)) {
+      decoded = decoded.replace(new RegExp(entity, 'g'), char);
+    }
+    
+    return decoded;
+  };
+
+  const truncateText = (text: string, limit: number = 60): string => {
+    if (!text) return '';
+    const decoded = decodeHtmlEntities(text);
+    if (decoded.length <= limit) return decoded;
+    return decoded.slice(0, limit) + '...';
+  };
+
   const isLoadingState = isLoading || comicsLoading;
 
   if (isLoadingState) {
@@ -160,8 +200,8 @@ export function History() {
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: theme.palette.background.default }}>
       <CssBaseline />
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 4 }}>
+      <Container maxWidth="md" sx={{ py: 4 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
           <HistoryIcon sx={{ color: theme.palette.primary.main, fontSize: 32 }} />
           <Typography variant="h4" sx={{ color: theme.palette.text.primary, fontWeight: 'bold' }}>
             Reading History
@@ -203,99 +243,34 @@ export function History() {
             </Button>
           </Paper>
         ) : (
-          <Grid container spacing={3}>
-            {historyItems.map((item, index) => (
-              <Grid item xs={12} sm={6} md={4} key={`${item.extension_id}-${item.book_id}-${item.chapter_number}-${index}`}>
-                <Card
-                  sx={{
-                    bgcolor: theme.palette.background.paper,
-                    borderRadius: 2,
-                    border: `1px solid ${theme.palette.divider}`,
-                    transition: 'all 0.2s ease',
-                    overflow: 'hidden',
-                    '&:hover': {
-                      transform: 'translateY(-4px)',
-                      boxShadow: theme.customShadows?.lg || '0 8px 24px rgba(0,0,0,0.3)',
-                      borderColor: `${theme.palette.primary.main}66`,
-                    },
-                  }}
-                >
-                  <CardActionArea onClick={() => handleGoToDetails(item)}>
-                    <Box sx={{ position: 'relative' }}>
-                      {item.cover ? (
-                        <CardMedia
-                          component="img"
-                          image={item.cover}
-                          alt={item.comic_title}
-                          sx={{
-                            height: 200,
-                            objectFit: 'cover',
-                          }}
-                        />
-                      ) : (
-                        <Box
-                          sx={{
-                            height: 200,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            bgcolor: `${theme.palette.primary.main}1a`,
-                          }}
-                        >
-                          <Typography variant="h2" sx={{ color: `${theme.palette.primary.main}80` }}>
-                            {item.comic_title.charAt(0)}
-                          </Typography>
-                        </Box>
-                      )}
-                      <Chip
-                        label={formatDate(item.read_at)}
-                        size="small"
-                        sx={{
-                          position: 'absolute',
-                          top: 8,
-                          right: 8,
-                          bgcolor: 'rgba(0,0,0,0.7)',
-                          backdropFilter: 'blur(10px)',
-                          color: 'white',
-                          fontSize: '0.6rem',
-                          height: 20,
-                        }}
-                      />
-                    </Box>
-                    <CardContent>
-                      <Typography
-                        variant="h6"
-                        noWrap
-                        sx={{
-                          color: theme.palette.text.primary,
-                          fontWeight: 'bold',
-                          fontSize: '1rem',
-                        }}
-                      >
-                        {item.comic_title}
-                      </Typography>
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          color: theme.palette.text.secondary,
-                          mt: 0.5,
-                        }}
-                      >
-                        Chapter {item.chapter_number}
-                        {item.title && ` - ${item.title}`}
-                      </Typography>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-                        <Chip
-                          label={`Page ${item.page_number}`}
-                          size="small"
-                          sx={{
-                            bgcolor: `${theme.palette.primary.main}33`,
-                            color: theme.palette.primary.main,
-                            fontSize: '0.6rem',
-                            height: 20,
-                          }}
-                        />
-                        <Box sx={{ flex: 1 }} />
+          <Paper
+            elevation={0}
+            sx={{
+              bgcolor: 'transparent',
+              borderRadius: 2,
+              overflow: 'hidden',
+            }}
+          >
+            <List disablePadding>
+              {historyItems.map((item, index) => (
+                <Box key={`${item.extension_id}-${item.book_id}-${item.chapter_number}-${index}`}>
+                  <Paper
+                    elevation={0}
+                    sx={{
+                      bgcolor: theme.palette.background.paper,
+                      borderRadius: 2,
+                      border: `1px solid ${theme.palette.divider}`,
+                      mb: 1,
+                      transition: 'all 0.2s ease',
+                      '&:hover': {
+                        borderColor: theme.palette.primary.main,
+                        boxShadow: theme.customShadows?.sm || '0 2px 8px rgba(0,0,0,0.08)',
+                      },
+                    }}
+                  >
+                    <ListItem
+                      disablePadding
+                      secondaryAction={
                         <Button
                           size="small"
                           variant="contained"
@@ -306,19 +281,101 @@ export function History() {
                           }}
                           sx={{
                             textTransform: 'none',
-                            fontSize: '0.75rem',
+                            fontSize: '0.7rem',
                             py: 0.5,
+                            px: 1.5,
+                            mr: 1,
                           }}
                         >
                           Continue
                         </Button>
-                      </Box>
-                    </CardContent>
-                  </CardActionArea>
-                </Card>
-              </Grid>
-            ))}
-          </Grid>
+                      }
+                    >
+                      <ListItemButton
+                        onClick={() => handleGoToDetails(item)}
+                        sx={{
+                          py: 1.5,
+                          px: 2,
+                          borderRadius: 2,
+                          '&:hover': {
+                            bgcolor: theme.palette.action.hover,
+                            borderRadius: 2,
+                          },
+                        }}
+                      >
+                        <ListItemAvatar>
+                          {item.cover ? (
+                            <Avatar
+                              src={item.cover}
+                              alt={item.comic_title}
+                              variant="rounded"
+                              sx={{
+                                width: 56,
+                                height: 56,
+                                borderRadius: 1,
+                                mr: 2,
+                              }}
+                            />
+                          ) : (
+                            <Avatar
+                              variant="rounded"
+                              sx={{
+                                width: 56,
+                                height: 56,
+                                borderRadius: 1,
+                                mr: 2,
+                                bgcolor: `${theme.palette.primary.main}1a`,
+                                color: theme.palette.primary.main,
+                              }}
+                            >
+                              {item.comic_title.charAt(0)}
+                            </Avatar>
+                          )}
+                        </ListItemAvatar>
+                        <ListItemText
+                          primary={
+                            <Typography
+                              variant="body1"
+                              sx={{
+                                color: theme.palette.text.primary,
+                                fontWeight: 500,
+                              }}
+                            >
+                              {item.comic_title}
+                            </Typography>
+                          }
+                          secondary={
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mt: 0.5 }}>
+                              {item.title && (
+                                <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+                                  {truncateText(item.title, 60)}
+                                </Typography>
+                              )}
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                                <Chip
+                                  label={`Page ${item.page_number}`}
+                                  size="small"
+                                  sx={{
+                                    bgcolor: `${theme.palette.primary.main}33`,
+                                    color: theme.palette.primary.main,
+                                    fontSize: '0.6rem',
+                                    height: 18,
+                                  }}
+                                />
+                                <Typography variant="caption" sx={{ color: theme.palette.text.disabled }}>
+                                  {formatDate(item.read_at)}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          }
+                        />
+                      </ListItemButton>
+                    </ListItem>
+                  </Paper>
+                </Box>
+              ))}
+            </List>
+          </Paper>
         )}
       </Container>
     </Box>

@@ -125,50 +125,60 @@ export function useExtensionContent({ extensionId }: UseExtensionContentProps) {
     return parts.join('&')
   }
 
+  const fetchExtensionData = useCallback(async (mode: string, filters: FilterParams, pageNum?: number) => {
+    if (!extensionId) return null
+    
+    let queryType = 'search'
+    let queryParam = ''
+    let page = pageNum || 1
+    
+    if (mode === 'popular') {
+      queryType = 'popular'
+      queryParam = 'day'
+    } else if (mode === 'latest') {
+      queryType = 'latest'
+      page = pageNum || 1
+    } else {
+      queryType = 'filtered'
+      queryParam = buildFilterQuery(filters)
+    }
+    
+    const result = await api.extension.search(queryType, queryParam || undefined, mode === 'latest' ? page : undefined)
+    
+    if (result && typeof result === 'object') {
+      let extensionData = null
+      
+      if (extensionId && result[extensionId]) {
+        extensionData = result[extensionId]
+      } else {
+        const keys = Object.keys(result)
+        for (const key of keys) {
+          if (result[key] && result[key].data && Array.isArray(result[key].data)) {
+            extensionData = result[key]
+            break
+          }
+        }
+      }
+      
+      if (extensionData && extensionData.data && Array.isArray(extensionData.data)) {
+        const sanitizedData = extensionData.data.map(sanitizeItem)
+        return {
+          data: sanitizedData,
+          total: extensionData.total || sanitizedData.length,
+          page: extensionData.page || page,
+          per_page: extensionData.per_page || sanitizedData.length,
+          has_more: extensionData.has_more || false
+        }
+      }
+    }
+    
+    return { data: [], total: 0, page: 1, per_page: 0, has_more: false }
+  }, [extensionId])
+
   const { data: searchData, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['extensionSearch', extensionId, viewMode, appliedFilters],
     queryFn: async () => {
-      if (!extensionId) return null
-      
-      let query = ''
-      if (viewMode === 'popular') {
-        query = 'popular'
-      } else if (viewMode === 'latest') {
-        query = 'latest'
-      } else {
-        query = buildFilterQuery(appliedFilters)
-      }
-      
-      const result = await api.extension.search(query)
-      
-      if (result && typeof result === 'object') {
-        let extensionData = null
-        
-        if (extensionId && result[extensionId]) {
-          extensionData = result[extensionId]
-        } else {
-          const keys = Object.keys(result)
-          for (const key of keys) {
-            if (result[key] && result[key].data && Array.isArray(result[key].data)) {
-              extensionData = result[key]
-              break
-            }
-          }
-        }
-        
-        if (extensionData && extensionData.data && Array.isArray(extensionData.data)) {
-          const sanitizedData = extensionData.data.map(sanitizeItem)
-          return {
-            data: sanitizedData,
-            total: extensionData.total || sanitizedData.length,
-            page: extensionData.page || 1,
-            per_page: extensionData.per_page || sanitizedData.length,
-            has_more: extensionData.has_more || false
-          }
-        }
-      }
-      
-      return { data: [], total: 0, page: 1, per_page: 0, has_more: false }
+      return fetchExtensionData(viewMode, appliedFilters)
     },
     enabled: !!extensionInfo && !!extensionId,
     staleTime: 30 * 1000,
@@ -223,58 +233,27 @@ export function useExtensionContent({ extensionId }: UseExtensionContentProps) {
     setFilterParams(prev => ({ ...prev, [key]: value }))
   }, [])
 
-  const loadMore = useCallback(() => {
+  const loadMore = useCallback(async () => {
     if (searchData?.has_more && !isLoading && !isFetching) {
       const nextPage = (searchData.page || 1) + 1
-      queryClient.fetchQuery({
-        queryKey: ['extensionSearch', extensionId, viewMode, appliedFilters, nextPage],
-        queryFn: async () => {
-          if (!extensionId) return null
-          
-          let query = ''
-          if (viewMode === 'popular') {
-            query = 'popular'
-          } else if (viewMode === 'latest') {
-            query = 'latest'
-          } else {
-            query = buildFilterQuery(appliedFilters)
-          }
-          
-          const result = await api.extension.search(query)
-          
-          if (result && typeof result === 'object') {
-            let extensionData = null
-            
-            if (extensionId && result[extensionId]) {
-              extensionData = result[extensionId]
-            } else {
-              const keys = Object.keys(result)
-              for (const key of keys) {
-                if (result[key] && result[key].data && Array.isArray(result[key].data)) {
-                  extensionData = result[key]
-                  break
-                }
-              }
-            }
-            
-            if (extensionData && extensionData.data && Array.isArray(extensionData.data)) {
-              const sanitizedData = extensionData.data.map(sanitizeItem)
-              setItems(prev => [...prev, ...sanitizedData])
-              return {
-                data: sanitizedData,
-                total: extensionData.total || sanitizedData.length,
-                page: extensionData.page || 1,
-                per_page: extensionData.per_page || sanitizedData.length,
-                has_more: extensionData.has_more || false
-              }
-            }
-          }
-          
-          return { data: [], total: 0, page: 1, per_page: 0, has_more: false }
-        }
-      })
+      const result = await fetchExtensionData(viewMode, appliedFilters, nextPage)
+      
+      if (result && result.data && result.data.length > 0) {
+        setItems(prev => [...prev, ...result.data])
+        // Update the cached data with the new total
+        queryClient.setQueryData(
+          ['extensionSearch', extensionId, viewMode, appliedFilters],
+          (old: any) => ({
+            ...old,
+            data: [...(old?.data || []), ...result.data],
+            total: result.total,
+            page: result.page,
+            has_more: result.has_more
+          })
+        )
+      }
     }
-  }, [searchData, isLoading, isFetching, extensionId, viewMode, appliedFilters, queryClient])
+  }, [searchData, isLoading, isFetching, extensionId, viewMode, appliedFilters, queryClient, fetchExtensionData])
 
   return {
     items,

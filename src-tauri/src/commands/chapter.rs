@@ -5,7 +5,6 @@ use crate::db::DbConn;
 use crate::models::DownloadChapterInput;
 use crate::services::DownloadService;
 use std::path::PathBuf;
-use tokio::fs;
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_cached_chapter_images(
@@ -102,7 +101,7 @@ pub async fn download_chapter(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn get_download_status(
+pub async fn get_chapter_download_status(
     _pool: State<'_, DbPool>,
     input: DownloadChapterInput,
 ) -> Result<Value, String> {
@@ -143,7 +142,7 @@ fn sanitize_path(name: &str) -> String {
         .collect()
 }
 
-async fn create_cbz(path: &PathBuf, images: &[String], title: &str) -> Result<(), String> {
+async fn create_cbz(path: &PathBuf, images: &[String], _title: &str) -> Result<(), String> {
     use zip::write::FileOptions;
     use zip::ZipWriter;
     use std::io::Write;

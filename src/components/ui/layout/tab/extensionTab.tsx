@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, getActiveExtensionIds } from '~/components'
+import { api, getActiveExtensionIds, useExtensionDownload } from '~/components'
 import {
   Grid,
   Paper,
@@ -15,9 +15,11 @@ import {
   Button,
   Snackbar,
   Alert,
+  LinearProgress,
   useTheme,
 } from '@mui/material'
 import ExtensionIcon from '@mui/icons-material/Extension'
+import DownloadIcon from '@mui/icons-material/Download'
 
 interface ManifestExtension {
   name: string
@@ -39,6 +41,8 @@ export function ExtensionsTab() {
     severity: 'success',
   })
   const [activating, setActivating] = useState<string | null>(null)
+  const { downloadExtension, isDownloading, progress, message, error, completed, reset } = useExtensionDownload()
+  const [downloadingExtId, setDownloadingExtId] = useState<string | null>(null)
 
   const { data: sourceData, isLoading: sourcesLoading } = useQuery({
     queryKey: ['sources'],
@@ -46,7 +50,7 @@ export function ExtensionsTab() {
     staleTime: 5 * 60 * 1000,
   })
 
-  const { data: extData, isLoading: extensionsLoading } = useQuery({
+  const { data: extData, isLoading: extensionsLoading, refetch: refetchExtensions } = useQuery({
     queryKey: ['extensions'],
     queryFn: () => api.sources.getExtensions(),
     staleTime: 5 * 60 * 1000,
@@ -118,6 +122,32 @@ export function ExtensionsTab() {
     }
   }
 
+  const handleDownloadExtension = async (id: string, name: string) => {
+    setDownloadingExtId(id)
+    reset()
+    try {
+      await downloadExtension(id)
+      if (completed) {
+        setSnackbar({
+          open: true,
+          message: `"${name}" has been downloaded and activated`,
+          severity: 'success',
+        })
+        await refetchExtensions()
+        queryClient.invalidateQueries({ queryKey: ['sources'] })
+        queryClient.invalidateQueries({ queryKey: ['extensions'] })
+      }
+    } catch (error) {
+      setSnackbar({
+        open: true,
+        message: (error as Error).message || 'Failed to download extension',
+        severity: 'error',
+      })
+    } finally {
+      setDownloadingExtId(null)
+    }
+  }
+
   const closeSnackbar = () => {
     setSnackbar({ ...snackbar, open: false })
   }
@@ -185,11 +215,48 @@ export function ExtensionsTab() {
             </Typography>
           </Box>
 
+          {isDownloading && downloadingExtId && (
+            <Box sx={{ p: 2, borderBottom: `1px solid ${theme.palette.divider}` }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <CircularProgress size={24} sx={{ color: theme.palette.primary.main }} />
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="body2" sx={{ color: theme.palette.text.primary }}>
+                    {message}
+                  </Typography>
+                  <LinearProgress
+                    variant="determinate"
+                    value={progress}
+                    sx={{
+                      mt: 1,
+                      height: 4,
+                      borderRadius: 2,
+                      bgcolor: theme.palette.action.hover,
+                      '& .MuiLinearProgress-bar': {
+                        borderRadius: 2,
+                        bgcolor: theme.palette.primary.main,
+                      },
+                    }}
+                  />
+                </Box>
+                <Typography variant="caption" sx={{ color: theme.palette.text.secondary, minWidth: 40 }}>
+                  {progress}%
+                </Typography>
+              </Box>
+              {error && (
+                <Typography variant="caption" sx={{ color: theme.palette.error.main, mt: 1, display: 'block' }}>
+                  Error: {error}
+                </Typography>
+              )}
+            </Box>
+          )}
+
           {manifestExtensions.length > 0 ? (
             <List disablePadding>
               {manifestExtensions.map((ext: any) => {
                 const isActivating = activating === ext.id
+                const isDownloadingThis = downloadingExtId === ext.id && isDownloading
                 const isActive = ext.isActive
+                const isInstalled = ext.isLoaded
                 
                 return (
                   <ListItem
@@ -235,6 +302,18 @@ export function ExtensionsTab() {
                               }}
                             />
                           )}
+                          {isInstalled && !isActive && (
+                            <Chip
+                              label="Installed"
+                              size="small"
+                              sx={{
+                                bgcolor: `${theme.palette.success.main}33`,
+                                color: theme.palette.success.main,
+                                fontSize: '0.65rem',
+                                height: 20,
+                              }}
+                            />
+                          )}
                         </Box>
                       }
                       secondary={
@@ -255,8 +334,8 @@ export function ExtensionsTab() {
                         </Box>
                       }
                     />
-                    <Box sx={{ ml: 2 }}>
-                      {isActivating ? (
+                    <Box sx={{ ml: 2, display: 'flex', gap: 1 }}>
+                      {isDownloadingThis ? (
                         <CircularProgress size={24} sx={{ color: theme.palette.primary.main }} />
                       ) : isActive ? (
                         <Button
@@ -268,7 +347,7 @@ export function ExtensionsTab() {
                         >
                           Deactivate
                         </Button>
-                      ) : (
+                      ) : isInstalled ? (
                         <Button
                           size="small"
                           variant="contained"
@@ -276,6 +355,16 @@ export function ExtensionsTab() {
                           disabled={!!activating}
                         >
                           Activate
+                        </Button>
+                      ) : (
+                        <Button
+                          size="small"
+                          variant="contained"
+                          startIcon={<DownloadIcon />}
+                          onClick={() => handleDownloadExtension(ext.id, ext.name)}
+                          disabled={isDownloading}
+                        >
+                          Install
                         </Button>
                       )}
                     </Box>

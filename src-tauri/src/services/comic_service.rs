@@ -128,19 +128,6 @@ impl ComicService {
         Ok(new_favorite == 1)
     }
 
-    pub fn update_last_read(conn: &DbConn, comic_id: i64, last_read_json: &str) -> Result<()> {
-        conn.conn().execute(
-            r#"
-            UPDATE comics SET 
-                last_read = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            "#,
-            params![last_read_json, comic_id]
-        )?;
-        Ok(())
-    }
-
     pub fn delete_comic(conn: &DbConn, comic_id: i64) -> Result<()> {
         conn.conn().execute(
             "DELETE FROM reading_history WHERE comic_id = ?",

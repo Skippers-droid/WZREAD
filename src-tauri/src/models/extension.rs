@@ -18,6 +18,7 @@ pub struct Manifest {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ManifestExtension {
+    pub id: String,
     pub name: String,
     pub version: String,
     pub description: String,
@@ -64,6 +65,7 @@ pub struct ExtensionListItem {
     pub cover: Option<String>,
     pub is_active: bool,
     pub is_loaded: bool,
+    pub download_status: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

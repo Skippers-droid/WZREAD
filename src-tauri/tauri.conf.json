@@ -23,7 +23,6 @@
   },
   "bundle": {
     "active": true,
-    "identifier": "com.whitz.wzread",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,7 +41,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc3RjJDRDMyOThFNjE2RjMKUldUekZ1YVlNczN5ZCtuRFE1WnFtZHhtTzJqNXVFRlE0UXZBbEFXekpkL1pCcEtOK3JNWVNFUmwK",
       "endpoints": [
-        "https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/latest.json"
+        "https://github.com/Skippers-droid/WZREAD/releases/latest/download/latest.json"
       ]
     }
   }

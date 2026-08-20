@@ -1,7 +1,8 @@
 use rusqlite::{Connection, Result};
 
 pub fn run_migrations(conn: &Connection) -> Result<()> {
-    conn.execute_batch(r#"
+    conn.execute_batch(
+        r#"
         PRAGMA foreign_keys = ON;
 
         CREATE TABLE IF NOT EXISTS source (
@@ -71,24 +72,53 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
-        CREATE INDEX IF NOT EXISTS idx_source_name ON source(source_name);
-        CREATE INDEX IF NOT EXISTS idx_source_is_active ON source(is_active);
-        CREATE INDEX IF NOT EXISTS idx_loaded_extension_source_id ON loaded_extension(source_id);
-        CREATE INDEX IF NOT EXISTS idx_loaded_extension_extension_id ON loaded_extension(extension_id);
-        CREATE INDEX IF NOT EXISTS idx_loaded_extension_is_active ON loaded_extension(is_active);
-        CREATE INDEX IF NOT EXISTS idx_comics_extension_id ON comics(extension_id);
-        CREATE INDEX IF NOT EXISTS idx_comics_favorite ON comics(favorite);
-        CREATE INDEX IF NOT EXISTS idx_reading_history_ext_extension_id ON reading_history_ext(extension_id);
-        CREATE INDEX IF NOT EXISTS idx_reading_history_ext_book_id ON reading_history_ext(book_id);
-        CREATE INDEX IF NOT EXISTS idx_reading_history_comic_id ON reading_history(comic_id);
-        CREATE INDEX IF NOT EXISTS idx_settings_key ON settings(key);
-    "#)?;
+        CREATE INDEX IF NOT EXISTS idx_source_name
+            ON source(source_name);
 
-    conn.execute_batch(r#"
-        INSERT OR IGNORE INTO settings (key, value) VALUES 
-            ('user_agent', '"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"'),
-            ('default_source', '"https://raw.githubusercontent.com/Skippers-droid/wzread-extensions/refs/heads/main/bundled-extensions/wzread.mf.json"');
-    "#)?;
+        CREATE INDEX IF NOT EXISTS idx_source_is_active
+            ON source(is_active);
+
+        CREATE INDEX IF NOT EXISTS idx_loaded_extension_source_id
+            ON loaded_extension(source_id);
+
+        CREATE INDEX IF NOT EXISTS idx_loaded_extension_extension_id
+            ON loaded_extension(extension_id);
+
+        CREATE INDEX IF NOT EXISTS idx_loaded_extension_is_active
+            ON loaded_extension(is_active);
+
+        CREATE INDEX IF NOT EXISTS idx_comics_extension_id
+            ON comics(extension_id);
+
+        CREATE INDEX IF NOT EXISTS idx_comics_favorite
+            ON comics(favorite);
+
+        CREATE INDEX IF NOT EXISTS idx_reading_history_ext_extension_id
+            ON reading_history_ext(extension_id);
+
+        CREATE INDEX IF NOT EXISTS idx_reading_history_ext_book_id
+            ON reading_history_ext(book_id);
+
+        CREATE INDEX IF NOT EXISTS idx_reading_history_comic_id
+            ON reading_history(comic_id);
+
+        CREATE INDEX IF NOT EXISTS idx_settings_key
+            ON settings(key);
+
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES
+            (
+                'user_agent',
+                '"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"'
+            ),
+            (
+                'default_source',
+                '"https://raw.githubusercontent.com/Skippers-droid/wzread-extensions/refs/heads/main/bundled-extensions/wzread.mf.json"'
+            );
+        "#,
+    )?;
+
+    tracing::info!("Database migrations completed");
 
     Ok(())
 }

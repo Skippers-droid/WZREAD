@@ -1,3 +1,5 @@
+// FILE: /src/components/SearchModal.tsx
+
 import { useState, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -69,7 +71,7 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
     setHasSearched(true)
 
     try {
-      const data = await api.extension.search(query) as Record<string, SearchResult>
+      const data = await api.extension.search('search', query) as Record<string, SearchResult>
       
       if (filterType === 'name') {
         const filteredData: Record<string, SearchResult> = {}
